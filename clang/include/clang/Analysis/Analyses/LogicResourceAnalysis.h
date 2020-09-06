@@ -10,13 +10,49 @@
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Driver/Options.h"
 #include "clang/Frontend/CompilerInstance.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace clang{
 class CFG;
 class CFGBlock;
 class CompilerInstance;
+class FieldDecl;
 
 namespace {
+
+class TargetVariable {
+	public:
+		TargetVariable(ValueDecl*);
+		void print(llvm::raw_fd_ostream &);
+		bool addCondition(Expr *);
+		std::set<Expr *>& getTargetConditions();
+	private:
+		std::set<Expr *> _targetConds_;
+		// either a non-FieldDecl global variable or a FieldDecl
+		ValueDecl _decl_;
+};
+
+class TargetVariableExtractionVisitor : public RecursiveASTVisitor<TargetVariableExtractionVisitor> {
+	public:
+		explicit TargetVariableExtractionVisitor(ASTContext *Context) : _astContext_(Context){}
+	private:
+		ASTContext *_astContext_;
+};
+
+
+class TargetConditionVisitor : public RecursiveASTVisitor<TargetConditionVisitor> {
+	public:
+		explicit TargetConditionVisitor(ASTContext *Context) : _astContext_(Context), _isTargetCond_(false), _shouldVisitDRE_(false) {}
+		bool VisitBinaryOperator(BinaryOperator *);
+		bool VisitDeclRefExpr(DeclRefExpr *);
+		bool VisitCallExpr(CallExpr *);
+		bool isTargetCondition();
+	private:
+		ASTContext *_astContext_;
+		bool _isTargetCond_;
+		bool _shouldVisitDRE_;
+		bool isIntComparison(const BinaryOperator *BO);
+};
 
 class LogicResourceAnalysisVisitor : public RecursiveASTVisitor<LogicResourceAnalysisVisitor> {
     public:
@@ -29,11 +65,9 @@ class LogicResourceAnalysisVisitor : public RecursiveASTVisitor<LogicResourceAna
 		std::set<CFGBlock*> _normalReturns_;
 		std::set<CFGBlock*> _taskHangs_;
 		std::set<CFGBlock*> _targetConds_;
-        bool isTargetCondition(const Expr *);
         void parseCFG(CFG *);
         void collectCriticalBehavior(CFGBlock *);
-        void collectTargetConds(const Expr *);
-        bool isIntComparison(const BinaryOperator *);
+        void collectTargetConds(CFGBlock *);
         void printStmt(const Stmt *, const FunctionDecl *);
 };
 
