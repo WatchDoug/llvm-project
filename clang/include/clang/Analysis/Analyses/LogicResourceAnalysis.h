@@ -19,66 +19,91 @@ class CompilerInstance;
 class FieldDecl;
 
 namespace {
+using AssignmentMap = std::map<ValueDecl *, ValueDecl *>;
 
-class TargetVariable {
+template <bool isFlowSensitive>
+class LogicResourceAssignmentMap;
+
+template <>
+class LogicResourceAssignmentMap<false>
+{
 	public:
-		TargetVariable(ValueDecl*);
-		void print(llvm::raw_fd_ostream &);
-		bool addCondition(Expr *);
-		std::set<Expr *>& getTargetConditions();
+		LogicResourceAssignmentMap(CFG *G) : _cfg_(G) {buildAssignmentMap();}
+		AssignmentMap &getAssignmentMap(CFGBlock *);
 	private:
-		std::set<Expr *> _targetConds_;
-		// either a non-FieldDecl global variable or a FieldDecl
-		ValueDecl _decl_;
+		CFG *_cfg_;
+		// Flow-insensitive implementation
+		AssignmentMap _assignMap_;
+		void buildAssignmentMap();
 };
 
-class TargetVariableExtractionVisitor : public RecursiveASTVisitor<TargetVariableExtractionVisitor> {
+template <>
+class LogicResourceAssignmentMap<true>
+{
 	public:
-		explicit TargetVariableExtractionVisitor(ASTContext *Context) : _astContext_(Context){}
+		LogicResourceAssignmentMap(CFG *G) : _cfg_(G) {buildAssignmentMap();}
+		AssignmentMap &getAssignmentMap(CFGBlock *);
+	private:
+		CFG *_cfg_;
+		// Flow-sensitive implementation
+		std::map<CFGBlock *, AssignmentMap> _assignMap_;
+		void buildAssignmentMap();
+};
+
+class ConsequenceBehaviorVisitor : public RecursiveASTVisitor<ConsequenceBehaviorVisitor> {
+	public:
+		explicit ConsequenceBehaviorVisitor(ASTContext *Context) : _astContext_(Context), _isCharacteristicCall_(false), _isErrReturn_(false), _isNormalReturn_(false), _traverseReturn_(false) {}
+		bool dataTraverseStmtPost(Stmt *);
+		bool VisitReturnStmt(ReturnStmt *);
+		bool VisitCallExpr(CallExpr *);
+		bool isCharacteristicCall();
+		bool isErrReturn();
+		bool isNormalReturn();
 	private:
 		ASTContext *_astContext_;
+		bool _isCharacteristicCall_;
+		bool _isErrReturn_;
+		bool _isNormalReturn_;
+		bool _traverseReturn_;
 };
 
-
-class TargetConditionVisitor : public RecursiveASTVisitor<TargetConditionVisitor> {
+class PotentialLRVCollector : public RecursiveASTVisitor<PotentialLRVCollector> {
 	public:
-		explicit TargetConditionVisitor(ASTContext *Context) : _astContext_(Context), _isTargetCond_(false), _shouldVisitDRE_(false) {}
-		bool VisitBinaryOperator(BinaryOperator *);
+		explicit PotentialLRVCollector(ASTContext *Context) : _astContext_(Context), _containCallExpr_(false) {}
+		bool VisitMemberExpr(MemberExpr *);
 		bool VisitDeclRefExpr(DeclRefExpr *);
 		bool VisitCallExpr(CallExpr *);
-		bool isTargetCondition();
+		bool containPotentialLRV();
+		bool containCallExpr();
+		std::set<ValueDecl *> &getPotentialLRV();
 	private:
 		ASTContext *_astContext_;
-		bool _isTargetCond_;
-		bool _shouldVisitDRE_;
-		bool isIntComparison(const BinaryOperator *BO);
-};
-
-class LogicResourceAnalysisVisitor : public RecursiveASTVisitor<LogicResourceAnalysisVisitor> {
-    public:
-        explicit LogicResourceAnalysisVisitor(ASTContext *Context) : _astContext_(Context) {}
-        bool VisitFunctionDecl(FunctionDecl *);
-    
-    private:
-        ASTContext *_astContext_;
-		std::set<CFGBlock*> _errorReturns_;
-		std::set<CFGBlock*> _normalReturns_;
-		std::set<CFGBlock*> _taskHangs_;
-		std::set<CFGBlock*> _targetConds_;
-        void parseCFG(CFG *);
-        void collectCriticalBehavior(CFGBlock *);
-        void collectTargetConds(CFGBlock *);
-        void printStmt(const Stmt *, const FunctionDecl *);
+		std::set<ValueDecl *> _potentialLRV_;
+		bool _containCallExpr_;
 };
 
 class LogicResourceAnalysisASTConsumer : public ASTConsumer {
 	public:
-		explicit LogicResourceAnalysisASTConsumer(ASTContext *Context) : _visitor_(Context) {}
-		virtual void HandleTranslationUnit(ASTContext &Context) {
-			_visitor_.TraverseDecl(Context.getTranslationUnitDecl());
-		}
+		explicit LogicResourceAnalysisASTConsumer(ASTContext *Context) : _astContext_(Context) {}
+		virtual void HandleTranslationUnit(ASTContext &) override;
 	private:
-		LogicResourceAnalysisVisitor _visitor_;
+		ASTContext *_astContext_;
+		std::set<CFGBlock*> _errorReturns_;
+		std::set<CFGBlock*> _normalReturns_;
+		std::set<CFGBlock*> _characteristicCalls_;
+		std::set<CFGBlock*> _criticalConds_;
+		std::map<ValueDecl*, std::set<std::pair<FunctionDecl *, Stmt *> > > _LRVInfo_;
+		std::set<std::pair<FunctionDecl *, Stmt *> > _undecidedConds_;
+        void parseCFG(CFG *);
+        void collectConsequenceBehavior(CFGBlock *);
+        void collectTargetConds(CFGBlock *);
+		void filterCriticalConds(CFG *);
+        void printStmt(llvm::raw_fd_ostream &, const FunctionDecl *, const Stmt *);
+		void printResult(llvm::raw_fd_ostream &);
+		void insertLRVInfo(ValueDecl *, FunctionDecl *, Stmt *);
+		void insertUndecidedConds(FunctionDecl *, Stmt *);
+		bool visitFunctionDecl(FunctionDecl *);
+		void clearStats();
 };
 
 class LogicResourceAnalysisAction : public PluginASTAction {
