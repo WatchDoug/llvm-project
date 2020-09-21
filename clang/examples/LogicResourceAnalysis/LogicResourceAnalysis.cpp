@@ -160,20 +160,21 @@ void LogicResourceAnalysisASTConsumer::printStmt(llvm::raw_fd_ostream &fstream, 
 }
 
 void LogicResourceAnalysisASTConsumer::printResult(llvm::raw_fd_ostream &fstream) {
+	fstream << "----------Module Begin----------\n";
 	for (auto lrv : _LRVInfo_){
 		fstream << "Identifier: ";
 		lrv.first->printQualifiedName(fstream);
 		fstream << "\n";
-		fstream << "Related Critical Conditions:\n";
 		for (auto condinfo : lrv.second) {
 			printStmt(fstream, condinfo.first, condinfo.second);
 		}
-		fstream << "----------------------------------------\n";
 	}
-	fstream << "---!!!---\nUndecided Conditions:\n";
+	fstream << "\n";
+	fstream << "Undecided Conditions:\n";
 	for (auto condinfo : _undecidedConds_) {
 		printStmt(fstream, condinfo.first, condinfo.second);
 	}
+	fstream << "----------Module End----------\n";
 }
 
 void LogicResourceAnalysisASTConsumer::insertLRVInfo(ValueDecl *VD, FunctionDecl *FD, Stmt *S) {
